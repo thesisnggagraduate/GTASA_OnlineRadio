@@ -3,12 +3,17 @@
 #include <mod/config.h>
 #include <thread>
 #include <sys/time.h>
+#include <ctime>
+#include <cmath>
+#include <dlfcn.h>
 
+#include <Events.h>
 #include <engine/Font.h>
 #include <engine/RsGlobal.h>
 #include <base/Timer.h>
+#include <entity/PlayerPed.h>
 
-MYMODCFG(net.rusjj.gtasa.onlineradio, GTA:SA Online Radio FIXED, 1.3, RusJJ)
+MYMODCFG(net.rusjj.gtasa.onlineradio, GTA:SA Online Radio, 1.2, RusJJ)
 NEEDGAME(com.rockstargames.gtasa)
 BEGIN_DEPLIST()
     ADD_DEPENDENCY(net.rusjj.basslib)
@@ -19,9 +24,15 @@ END_DEPLIST()
 #include "ibass.h"
 IBASS* BASS = nullptr;
 
-// ================= GLOBALS =================
+#include "isautils.h"
+ISAUtils* sautils = nullptr;
+
 uintptr_t pGTASA = 0;
 void* hGTASA = NULL;
+
+struct timeval pTimeNow;
+time_t lCurrentS;
+time_t lCurrentMs;
 
 ConfigEntry* pCurrentRadioIndex;
 ConfigEntry* pRadioVolume;
@@ -29,44 +40,66 @@ ConfigEntry* pRadioVolume;
 uint32_t pCurrentRadio = 0;
 const char** pRadioStreams;
 const char** pRadioNames;
+char nRadiosCount, nRadioIndex;
+bool bIsRadioStarted = false;
+bool bIsRadioShouldBeRendered = false;
+GxtChar RadioGXT[256] { 0 };
+CRGBA clrRadioLoading(255, 228, 181, 255);
+CRGBA clrRadioPlaying(255, 255, 255, 255);
 
-char nRadiosCount = 0;
-int nRadioIndex = 0;
+// Track if the player is in a vehicle
+bool bPlayerInVehicle = false;
 
-// ================= FIXED STATES =================
-bool bRadioUI = false;
-bool bRadioActive = false;
-bool bRadioPending = false;
-bool bRadioStarted = false;
-
-GxtChar RadioGXT[256]{0};
-
-// ================= COLORS =================
-CRGBA clrLoading(255, 200, 120, 255);
-CRGBA clrPlaying(255, 255, 255, 255);
-CRGBA clrIdle(180, 180, 180, 255);
-
-// ================= CLAMP =================
-inline void ClampIndex()
+// Helper functions for current time
+inline time_t GetCurrentTimeS()
 {
-    if(nRadiosCount <= 0) return;
-
-    if(nRadioIndex < 0)
-        nRadioIndex = nRadiosCount - 1;
-
-    if(nRadioIndex >= nRadiosCount)
-        nRadioIndex = 0;
+    gettimeofday(&pTimeNow, nullptr);
+    lCurrentS = pTimeNow.tv_sec;
+    return lCurrentS;
+}
+inline time_t GetCurrentTimeMs()
+{
+    gettimeofday(&pTimeNow, nullptr);
+    lCurrentMs = (1000 * pTimeNow.tv_sec) + (0.001f * pTimeNow.tv_usec);
+    return lCurrentMs;
 }
 
-// ================= RADIO CORE =================
+// Hook functions for game pause/resume
+DECL_HOOK(bool, PauseGame, void* self)
+{
+    bIsRadioShouldBeRendered = false;
+    if(pCurrentRadio != 0) BASS->ChannelPause(pCurrentRadio);
+    return PauseGame(self);
+}
+DECL_HOOK(bool, ResumeGame, void* self)
+{
+    if(pCurrentRadio != 0)
+    {
+        bIsRadioShouldBeRendered = true;
+        BASS->ChannelPlay(pCurrentRadio, false);
+    }
+    return ResumeGame(self);
+}
+
+// Volume control
+void VolumeChanged(int oldVal, int newVal, void* data)
+{
+    pRadioVolume->SetInt(newVal);
+    BASS->ChannelSetAttribute(pCurrentRadio, BASS_ATTRIB_VOL, 0.005f * newVal);
+    cfg->Save();
+}
+
+// Function to update the radio stream
+static char szNewText[0xFF];
+bool bRadioPending = false;
 void DoRadio()
 {
     if(bRadioPending) return;
     bRadioPending = true;
 
-    ClampIndex();
-
-    int index = nRadioIndex;
+    nRadioIndex = pCurrentRadioIndex->GetInt();
+    if(nRadioIndex < 0) nRadioIndex = nRadiosCount - 1;
+    if(nRadioIndex >= nRadiosCount) nRadioIndex = 0;
 
     if(pCurrentRadio)
     {
@@ -74,197 +107,186 @@ void DoRadio()
         BASS->StreamFree(pCurrentRadio);
         pCurrentRadio = 0;
     }
+    bIsRadioShouldBeRendered = true;
 
-    sprintf((char*)RadioGXT, "< Online Radio >~n~%s", pRadioNames[index]);
+    sprintf(szNewText, "< Current radiostation >~n~%s", pRadioNames[nRadioIndex]);
+    AsciiToGxtChar(szNewText, RadioGXT);
+    char myIndex = nRadioIndex;
 
-    auto stream = BASS->StreamCreateURL(
-        pRadioStreams[index],
-        0,
-        BASS_STREAM_BLOCK | BASS_STREAM_STATUS | BASS_STREAM_AUTOFREE | BASS_SAMPLE_FLOAT,
-        0
-    );
-
-    if(stream)
+    auto currentRadio = BASS->StreamCreateURL(pRadioStreams[nRadioIndex], 0, BASS_STREAM_BLOCK | BASS_STREAM_STATUS | BASS_STREAM_AUTOFREE | BASS_SAMPLE_FLOAT, 0);
+    if(currentRadio)
     {
-        pCurrentRadio = stream;
-
-        BASS->ChannelSetAttribute(
-            pCurrentRadio,
-            BASS_ATTRIB_VOL,
-            0.01f * pRadioVolume->GetInt()
-        );
-
-        if(!CTimer::IsPaused())
-            BASS->ChannelPlay(pCurrentRadio, true);
-
-        // ✅ FIX STATE SYNC
-        bRadioActive = true;
-        bRadioStarted = true;
-        bRadioUI = true;
-        bRadioPending = false;
+        if(nRadioIndex == myIndex)
+        {
+            pCurrentRadio = currentRadio;
+            BASS->ChannelSetAttribute(pCurrentRadio, BASS_ATTRIB_VOL, 0.005f * pRadioVolume->GetInt());
+            if(!CTimer::IsPaused()) BASS->ChannelPlay(pCurrentRadio, true);
+            bRadioPending = false;
+        }
+        else
+        {
+            BASS->StreamFree(currentRadio);
+        }
     }
     else
     {
-        logger->Error("Stream failed: %d", BASS->ErrorGetCode());
-
-        // ❗ SAFE RESET ONLY AUDIO STATE
-        bRadioActive = false;
-        bRadioStarted = false;
-        bRadioPending = false;
+        logger->Error("Failed to open stream! Error Code: %d", BASS->ErrorGetCode());
     }
 }
 
-// ================= START RADIO =================
+// Start radio hook
 DECL_HOOK(void, StartRadio, uintptr_t self, uintptr_t vehicleInfo)
 {
-    if(FindPlayerVehicle(-1, false))
-    {
-        bRadioUI = true;
-        nRadioIndex = pCurrentRadioIndex->GetInt();
-
-        if(!bRadioPending)
-            std::thread(DoRadio).detach();
-    }
-
-    StartRadio(self, vehicleInfo);
+    if(FindPlayerVehicle(-1, false) != 0)
+        std::thread(DoRadio).detach();
 }
 
-// ================= STOP RADIO =================
+// Stop radio hook
 DECL_HOOK(void, StopRadio, uintptr_t self, uintptr_t vehicleInfo, unsigned char flag)
 {
-    bRadioUI = false;
-    bRadioActive = false;
-    bRadioStarted = false;
-    bRadioPending = false;
-
-    if(pCurrentRadio)
+    // Keep playing if player leaves vehicle
+    if(!CTimer::IsPaused())
     {
+        bIsRadioStarted = false;
         BASS->ChannelStop(pCurrentRadio);
         BASS->StreamFree(pCurrentRadio);
         pCurrentRadio = 0;
+        nRadioIndex = -1;
     }
-
-    nRadioIndex = -1;
-
+    bIsRadioShouldBeRendered = false;
     StopRadio(self, vehicleInfo, flag);
 }
 
-// ================= PAUSE / RESUME (FIXED) =================
-DECL_HOOK(bool, PauseGame, void* self)
+// Periodic check to see if player is in vehicle
+void CheckPlayerVehicleState()
 {
-    if(pCurrentRadio)
-        BASS->ChannelPause(pCurrentRadio);
-
-    return PauseGame(self);
-}
-
-DECL_HOOK(bool, ResumeGame, void* self)
-{
-    if(pCurrentRadio && !CTimer::IsPaused())
-        BASS->ChannelPlay(pCurrentRadio, false);
-
-    return ResumeGame(self);
-}
-
-// ================= HUD DRAW (NO HIDE BUG FIXED) =================
-Events::drawHudEvent.after += []()
-{
-    if(!bRadioUI)
-        return;
-
-    float scale = (float)RsGlobal.maximumHeight / 540.0f;
-
-    CFont::SetScale(scale);
-
-    // ✅ FIXED COLOR LOGIC
-    if(!pCurrentRadio)
-        CFont::SetColor(clrLoading);
-    else if(bRadioPending)
-        CFont::SetColor(clrLoading);
-    else if(bRadioActive)
-        CFont::SetColor(clrPlaying);
-    else
-        CFont::SetColor(clrIdle);
-
-    CFont::SetFontStyle(FO_FONT_STYLE_HEADING);
-    CFont::SetEdge(1);
-    CFont::SetOrientation(ALIGN_CENTER);
-
-    CFont::PrintString(
-        0.5f * RsGlobal.maximumWidth,
-        0.02f * RsGlobal.maximumHeight,
-        RadioGXT
-    );
-
-    CFont::RenderFontBuffer();
-};
-
-// ================= TOUCH INPUT =================
-Events::touchScreenEvent.after += [](int type, int finger, int x, int y)
-{
-    if(!bRadioUI || type != 2 || bRadioPending)
-        return;
-
-    float top = RsGlobal.maximumHeight * 0.135f;
-    float left = RsGlobal.maximumWidth * 0.33f;
-    float right = RsGlobal.maximumWidth * 0.66f;
-    float mid = RsGlobal.maximumWidth * 0.5f;
-
-    if(y < top && x > left && x < right)
+    bool inVehicle = FindPlayerVehicle(-1, false) != 0;
+    if (inVehicle && !bPlayerInVehicle)
     {
-        if(x > mid)
-            nRadioIndex++;
-        else
-            nRadioIndex--;
-
-        ClampIndex();
-
-        pCurrentRadioIndex->SetInt(nRadioIndex);
-        cfg->Save();
-
-        std::thread(DoRadio).detach();
+        // Player just entered vehicle
+        bPlayerInVehicle = true;
+        // Resume radio if it was playing
+        if(pCurrentRadio != 0)
+        {
+            BASS->ChannelPlay(pCurrentRadio, false);
+        }
     }
-};
+    else if (!inVehicle && bPlayerInVehicle)
+    {
+        // Player just exited vehicle
+        bPlayerInVehicle = false;
+        // Optionally pause radio here if desired
+        // BASS->ChannelPause(pCurrentRadio);
+    }
+}
 
-// ================= INIT =================
+// Main mod load
 ON_MOD_LOAD()
 {
     pGTASA = aml->GetLib("libGTASA.so");
     hGTASA = aml->GetLibHandle("libGTASA.so");
 
     BASS = (IBASS*)GetInterface("BASS");
+    BASS->SetConfig(BASS_CONFIG_NET_TIMEOUT, 5000);
 
     pCurrentRadioIndex = cfg->Bind("CurrentRadioIndex", 0);
     pRadioVolume = cfg->Bind("RadioVolume", 80);
-
     nRadiosCount = cfg->Bind("RadiosCount", 0)->GetInt();
 
-    if(nRadiosCount <= 0)
+    if(nRadiosCount > 0)
     {
-        logger->Error("No radios found!");
+        if(nRadiosCount > MAX_RADIOS) nRadiosCount = MAX_RADIOS;
+        if(pCurrentRadioIndex->GetInt() < 0) pCurrentRadioIndex->SetInt(0);
+        if(pCurrentRadioIndex->GetInt() > MAX_RADIOS) pCurrentRadioIndex->SetInt(MAX_RADIOS);
+
+        nRadioIndex = -1;
+        pRadioStreams = new const char*[nRadiosCount];
+        pRadioNames = new const char*[nRadiosCount];
+
+        char szTemp[16];
+        for(int i = 0; i < nRadiosCount; ++i)
+        {
+            sprintf(szTemp, "Radio_%d", i+1);
+            pRadioStreams[i] = cfg->Bind(szTemp, "", "URLs")->GetString();
+            pRadioNames[i] = cfg->Bind(szTemp, "Untitled Radio", "Names")->GetString();
+        }
+
+        if(pRadioVolume->GetInt() > 100) pRadioVolume->SetInt(100);
+        else if(pRadioVolume->GetInt() < 0) pRadioVolume->SetInt(0);
+        cfg->Save();
+    }
+    else 
+    {
+        logger->Error("There is no radios in the config! Mod is not loaded.");
         return;
     }
 
-    if(nRadiosCount > MAX_RADIOS)
-        nRadiosCount = MAX_RADIOS;
+    // Hook game functions
+    HOOKPLT(PauseGame,          pGTASA + BYBIT(0x672644, 0x844230));
+    HOOKPLT(ResumeGame,         pGTASA + BYBIT(0x67056C, 0x840CB0));
+    HOOKPLT(StartRadio,         pGTASA + BYBIT(0x66F738, 0x83F5C0));
+    HOOK(StopRadio,             aml->GetSym(hGTASA, "_ZN20CAERadioTrackManager9StopRadioEP21tVehicleAudioSettingsh"));
 
-    pRadioStreams = new const char*[nRadiosCount];
-    pRadioNames   = new const char*[nRadiosCount];
+    // Remove radio from audio settings
+    aml->PlaceB(pGTASA + BYBIT(0x2A4D28 + 0x1, 0x3638A4), pGTASA + BYBIT(0x2A4D3C + 0x1, 0x3638C0));
 
-    char key[64];
-
-    for(int i = 0; i < nRadiosCount; i++)
+    // Add volume slider
+    sautils = (ISAUtils*)GetInterface("SAUtils");
+    if(sautils)
     {
-        sprintf(key, "Radio_%d", i + 1);
-
-        pRadioStreams[i] = cfg->Bind(key, "", "URLs")->GetString();
-        pRadioNames[i]   = cfg->Bind(key, "Untitled", "Names")->GetString();
+        sautils->AddSliderItem(SetType_Audio, "Online-Radio Volume", pRadioVolume->GetInt(), 0, 100, VolumeChanged);
     }
 
-    cfg->Save();
+    // Draw HUD event
+    Events::drawHudEvent.after += []
+    {
+        if(bIsRadioShouldBeRendered)
+        {
+            float flScale = (float)RsGlobal.maximumHeight / 540.0f;
+            CFont::SetScale(flScale);
+            CFont::SetColor(bIsRadioStarted ? clrRadioPlaying : clrRadioLoading);
+            CFont::SetFontStyle(FO_FONT_STYLE_HEADING);
+            CFont::SetEdge(1);
+            CFont::SetOrientation(ALIGN_CENTER);
+            CFont::PrintString(0.5f * RsGlobal.maximumWidth, 0.02f * RsGlobal.maximumHeight, RadioGXT);
+            CFont::RenderFontBuffer();
+        }
+    };
 
-    HOOKPLT(StartRadio, pGTASA + BYBIT(0x66F738, 0x83F5C0));
-    HOOK(StopRadio,
-        aml->GetSym(hGTASA,
-        "_ZN20CAERadioTrackManager9StopRadioEP21tVehicleAudioSettingsh"));
+    // Touch screen event for switching radios
+    Events::touchScreenEvent.after += [](int type, int finger, int x, int y)
+    {
+        if(bIsRadioShouldBeRendered && type == 2 /*TOUCH_PRESS*/)
+        {
+            if(!bRadioPending &&
+                y < (RsGlobal.maximumHeight * 0.135f) &&
+                x > (RsGlobal.maximumWidth * 0.33f) &&
+                x < (RsGlobal.maximumWidth * 0.66f) )
+            {
+                if(x > (RsGlobal.maximumWidth * 0.5f))
+                {
+                    ++nRadioIndex;
+                }
+                else
+                {
+                    --nRadioIndex;
+                }
+                pCurrentRadioIndex->SetInt(nRadioIndex);
+                cfg->Save();
+                std::thread(DoRadio).detach();
+            }
+        }
+    };
+
+    // Periodic check for vehicle state
+    // Use a timer or game loop to call this regularly
+    // For simplicity, assume a thread here:
+    std::thread([]()
+    {
+        while(true)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            CheckPlayerVehicleState();
+        }
+    }).detach();
 }
