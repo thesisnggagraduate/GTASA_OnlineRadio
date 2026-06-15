@@ -3,15 +3,17 @@
 #include <mod/config.h>
 #include <thread>
 #include <sys/time.h>
+#include <ctime>
+#include <cmath>
+#include <dlfcn.h>
 
 #include <Events.h>
 #include <engine/Font.h>
 #include <engine/RsGlobal.h>
 #include <base/Timer.h>
+#include <entity/PlayerPed.h>
 
-#include <game/Pad.h>   // ✅ FIX INPUT
-
-MYMODCFG(net.rusjj.gtasa.onlineradio, GTA:SA Online Radio FIX, 1.3, RusJJ)
+MYMODCFG(net.rusjj.gtasa.onlineradio, GTA:SA Online Radio FIX FULL, 1.5, RusJJ)
 NEEDGAME(com.rockstargames.gtasa)
 BEGIN_DEPLIST()
     ADD_DEPENDENCY(net.rusjj.basslib)
@@ -22,13 +24,36 @@ END_DEPLIST()
 #include "ibass.h"
 IBASS* BASS = nullptr;
 
-// ================= GLOBALS =================
+#include "isautils.h"
+ISAUtils* sautils = nullptr;
+
 uintptr_t pGTASA = 0;
 void* hGTASA = NULL;
 
+// ================= TIME (RESTORED) =================
+struct timeval pTimeNow;
+time_t lCurrentS;
+time_t lCurrentMs;
+
+inline time_t GetCurrentTimeS()
+{
+    gettimeofday(&pTimeNow, nullptr);
+    lCurrentS = pTimeNow.tv_sec;
+    return lCurrentS;
+}
+
+inline time_t GetCurrentTimeMs()
+{
+    gettimeofday(&pTimeNow, nullptr);
+    lCurrentMs = (1000 * pTimeNow.tv_sec) + (0.001f * pTimeNow.tv_usec);
+    return lCurrentMs;
+}
+
+// ================= CONFIG =================
 ConfigEntry* pCurrentRadioIndex;
 ConfigEntry* pRadioVolume;
 
+// ================= RADIO =================
 uint32_t pCurrentRadio = 0;
 const char** pRadioStreams;
 const char** pRadioNames;
@@ -38,7 +63,7 @@ int nRadioIndex = 0;
 
 // ================= FLAGS =================
 bool bRadioUI = false;
-bool bRadioPlaying = false;
+bool bRadioStarted = false;
 bool bRadioPending = false;
 
 // ================= TEXT =================
@@ -49,16 +74,39 @@ CRGBA clrLoading(255, 228, 181, 255);
 CRGBA clrPlaying(255, 255, 255, 255);
 CRGBA clrIdle(180, 180, 180, 255);
 
-// ================= CLAMP =================
-void ClampIndex()
+// ================= VOLUME (RESTORED EXACT) =================
+void VolumeChanged(int oldVal, int newVal, void* data)
 {
-    if(nRadiosCount <= 0) return;
+    pRadioVolume->SetInt(newVal);
 
-    if(nRadioIndex < 0)
-        nRadioIndex = nRadiosCount - 1;
+    if(pCurrentRadio)
+    {
+        BASS->ChannelSetAttribute(
+            pCurrentRadio,
+            BASS_ATTRIB_VOL,
+            0.005f * newVal
+        );
+    }
 
-    if(nRadioIndex >= nRadiosCount)
-        nRadioIndex = 0;
+    cfg->Save();
+}
+
+// ================= PAUSE =================
+DECL_HOOK(bool, PauseGame, void* self)
+{
+    if(pCurrentRadio)
+        BASS->ChannelPause(pCurrentRadio);
+
+    return PauseGame(self);
+}
+
+// ================= RESUME =================
+DECL_HOOK(bool, ResumeGame, void* self)
+{
+    if(pCurrentRadio && !CTimer::IsPaused())
+        BASS->ChannelPlay(pCurrentRadio, false);
+
+    return ResumeGame(self);
 }
 
 // ================= RADIO CORE =================
@@ -68,9 +116,10 @@ void DoRadio()
     if(lock) return;
     lock = true;
 
-    ClampIndex();
+    nRadioIndex = pCurrentRadioIndex->GetInt();
 
-    int idx = nRadioIndex;
+    if(nRadioIndex < 0) nRadioIndex = nRadiosCount - 1;
+    if(nRadioIndex >= nRadiosCount) nRadioIndex = 0;
 
     if(pCurrentRadio)
     {
@@ -79,10 +128,10 @@ void DoRadio()
         pCurrentRadio = 0;
     }
 
-    sprintf((char*)RadioGXT, "< Online Radio >~n~%s", pRadioNames[idx]);
+    sprintf((char*)RadioGXT, "< Online Radio >~n~%s", pRadioNames[nRadioIndex]);
 
     auto stream = BASS->StreamCreateURL(
-        pRadioStreams[idx],
+        pRadioStreams[nRadioIndex],
         0,
         BASS_STREAM_BLOCK | BASS_STREAM_STATUS | BASS_STREAM_AUTOFREE | BASS_SAMPLE_FLOAT,
         0
@@ -95,32 +144,34 @@ void DoRadio()
         BASS->ChannelSetAttribute(
             pCurrentRadio,
             BASS_ATTRIB_VOL,
-            0.01f * pRadioVolume->GetInt()
+            0.005f * pRadioVolume->GetInt()
         );
 
         if(!CTimer::IsPaused())
         {
             BASS->ChannelPlay(pCurrentRadio, true);
-            bRadioPlaying = true;
+            bRadioStarted = true;
         }
     }
     else
     {
         logger->Error("Stream failed: %d", BASS->ErrorGetCode());
-        bRadioPlaying = false;
+        bRadioStarted = false;
+
+        // IMPORTANT FIX: UI NEVER DISAPPEARS
+        bRadioUI = true;
     }
 
     bRadioPending = false;
     lock = false;
 }
 
-// ================= START RADIO =================
+// ================= START =================
 DECL_HOOK(void, StartRadio, uintptr_t self, uintptr_t vehicleInfo)
 {
-    if(FindPlayerVehicle(-1, false))
+    if(FindPlayerVehicle(-1, false) != 0)
     {
         bRadioUI = true;
-
         nRadioIndex = pCurrentRadioIndex->GetInt();
 
         if(!bRadioPending)
@@ -133,11 +184,11 @@ DECL_HOOK(void, StartRadio, uintptr_t self, uintptr_t vehicleInfo)
     StartRadio(self, vehicleInfo);
 }
 
-// ================= STOP RADIO =================
+// ================= STOP =================
 DECL_HOOK(void, StopRadio, uintptr_t self, uintptr_t vehicleInfo, unsigned char flag)
 {
     bRadioUI = false;
-    bRadioPlaying = false;
+    bRadioStarted = false;
     bRadioPending = false;
 
     if(pCurrentRadio)
@@ -152,38 +203,19 @@ DECL_HOOK(void, StopRadio, uintptr_t self, uintptr_t vehicleInfo, unsigned char 
     StopRadio(self, vehicleInfo, flag);
 }
 
-// ================= PAUSE / RESUME =================
-DECL_HOOK(bool, PauseGame, void* self)
-{
-    if(pCurrentRadio)
-        BASS->ChannelPause(pCurrentRadio);
-
-    return PauseGame(self);
-}
-
-DECL_HOOK(bool, ResumeGame, void* self)
-{
-    if(pCurrentRadio && !CTimer::IsPaused())
-        BASS->ChannelPlay(pCurrentRadio, false);
-
-    return ResumeGame(self);
-}
-
-// ================= MAIN LOOP (REPLACES ALL EVENTS) =================
+// ================= MAIN LOOP (FIXED EVENT USAGE ONLY) =================
 Events::gameProcessEvent += []()
 {
     if(!bRadioUI) return;
 
-    // ================= INPUT (FIX REPLACEMENT) =================
+    // ================= INPUT =================
     CPad* pad = CPad::GetPad(0);
 
     if(!bRadioPending)
     {
-        if(pad->NewState.LeftShoulder1) // PREV
+        if(pad->NewState.LeftShoulder1)
         {
             nRadioIndex--;
-            ClampIndex();
-
             pCurrentRadioIndex->SetInt(nRadioIndex);
             cfg->Save();
 
@@ -191,11 +223,9 @@ Events::gameProcessEvent += []()
             std::thread(DoRadio).detach();
         }
 
-        if(pad->NewState.RightShoulder1) // NEXT
+        if(pad->NewState.RightShoulder1)
         {
             nRadioIndex++;
-            ClampIndex();
-
             pCurrentRadioIndex->SetInt(nRadioIndex);
             cfg->Save();
 
@@ -211,7 +241,7 @@ Events::gameProcessEvent += []()
 
     if(!pCurrentRadio)
         CFont::SetColor(clrLoading);
-    else if(bRadioPlaying)
+    else if(bRadioStarted)
         CFont::SetColor(clrPlaying);
     else
         CFont::SetColor(clrIdle);
