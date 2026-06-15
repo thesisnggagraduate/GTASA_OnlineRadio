@@ -106,9 +106,17 @@ void SetVolume(int oldVal, int newVal, void* data)
 }
 
 // ================= SAFE VEHICLE CHECK =================
+#include <entity/PlayerPed.h>
+
 uintptr_t GetPlayerVeh()
 {
-    return sautils ? sautils->GetPlayerVehicle(-1) : 0;
+    CPed* player = FindPlayerPed(-1);
+    if(!player) return 0;
+
+    if(player->m_pVehicle)
+        return (uintptr_t)player->m_pVehicle;
+
+    return 0;
 }
 
 // ================= IMGUI UI =================
