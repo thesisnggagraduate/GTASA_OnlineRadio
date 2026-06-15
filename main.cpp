@@ -138,22 +138,21 @@ void DoRadio()
 
     if(!streamLoaded)
     {
-        // Failed after retries
-        // Magbago ang kulay o mag-display ng message
-        // Halimbawa: change color to red or maglagay ng message
-        // For simplicity, gamitin natin ang kulay para ipakita ang error
-        clrRadioLoading.SetRGBA(255, 0, 0, 255); // Red color indicating error
-        bIsRadioShouldBeRendered = true; // Still show UI, pero may warning
-        // Pwede ka ring maglagay ng text overlay dito para ipakita na error
+        clrRadioLoading.r = 255;
+        clrRadioLoading.g = 0;
+        clrRadioLoading.b = 0;
+        clrRadioLoading.a = 255;
+        bIsRadioShouldBeRendered = true; 
         sprintf(szNewText, "< Stream load failed >~n~%s", pRadioNames[nRadioIndex]);
         AsciiToGxtChar(szNewText, RadioGXT);
     }
     else
     {
-        // Successful load
-        retryCount = 0; // reset retry counter
-        // Reset color to normal
-        clrRadioLoading.SetRGBA(255, 228, 181, 255);
+        retryCount = 0; 
+        clrRadioLoading.r = 255;
+        clrRadioLoading.g = 228;
+        clrRadioLoading.b = 181;
+        clrRadioLoading.a = 255;
         bIsRadioShouldBeRendered = true;
     }
 
