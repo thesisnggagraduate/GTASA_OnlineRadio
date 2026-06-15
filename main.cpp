@@ -2,9 +2,6 @@
 #include <mod/logger.h>
 #include <mod/config.h>
 #include <thread>
-#include <sys/time.h>
-#include <cmath>
-#include <dlfcn.h>
 
 #include <Events.h>
 #include <engine/Font.h>
@@ -12,7 +9,7 @@
 #include <base/Timer.h>
 #include <entity/PlayerPed.h>
 
-MYMODCFG(net.rusjj.gtasa.onlineradio, GTA:SA Online Radio, 1.2-fixed, RusJJ)
+MYMODCFG(net.rusjj.gtasa.onlineradio, GTA:SA Online Radio FIXED, 1.3, RusJJ)
 NEEDGAME(com.rockstargames.gtasa)
 BEGIN_DEPLIST()
     ADD_DEPENDENCY(net.rusjj.basslib)
@@ -23,36 +20,26 @@ END_DEPLIST()
 #include "ibass.h"
 IBASS* BASS = nullptr;
 
-#include "isautils.h"
-ISAUtils* sautils = nullptr;
-
-uintptr_t pGTASA = 0;
-void* hGTASA = NULL;
-
 // ================= CONFIG =================
 ConfigEntry* pCurrentRadioIndex;
 ConfigEntry* pRadioVolume;
 
-uint32_t pCurrentRadio = 0;
 const char** pRadioStreams;
 const char** pRadioNames;
 
+uint32_t pCurrentRadio = 0;
 char nRadiosCount = 0;
 int nRadioIndex = 0;
 
-bool bIsRadioStarted = false;
-bool bIsRadioShouldBeRendered = false;
 bool bRadioPending = false;
+bool bRadioActive = false;
 
 GxtChar RadioGXT[256]{0};
-CRGBA clrRadioLoading(255, 228, 181, 255);
-CRGBA clrRadioPlaying(255, 255, 255, 255);
-
-// ================= TIME (unused safe) =================
-struct timeval pTimeNow;
+CRGBA clrLoading(255, 228, 181, 255);
+CRGBA clrPlaying(255, 255, 255, 255);
 
 // ================= SAFETY =================
-inline void ClampRadioIndex()
+inline void ClampIndex()
 {
     if(nRadiosCount <= 0) return;
 
@@ -63,13 +50,13 @@ inline void ClampRadioIndex()
         nRadioIndex = 0;
 }
 
-// ================= RADIO CORE =================
+// ================= RADIO =================
 void DoRadio()
 {
     if(bRadioPending) return;
     bRadioPending = true;
 
-    ClampRadioIndex();
+    ClampIndex();
 
     int index = nRadioIndex;
 
@@ -80,9 +67,7 @@ void DoRadio()
         pCurrentRadio = 0;
     }
 
-    bIsRadioShouldBeRendered = true;
-
-    sprintf((char*)RadioGXT, "< Current radiostation >~n~%s", pRadioNames[index]);
+    sprintf((char*)RadioGXT, "< Current Radio >~n~%s", pRadioNames[index]);
 
     auto stream = BASS->StreamCreateURL(
         pRadioStreams[index],
@@ -104,18 +89,14 @@ void DoRadio()
         if(!CTimer::IsPaused())
         {
             BASS->ChannelPlay(pCurrentRadio, true);
-            bIsRadioStarted = true;
+            bRadioActive = true;
         }
-    }
-    else
-    {
-        logger->Error("Radio failed to open stream: %d", BASS->ErrorGetCode());
     }
 
     bRadioPending = false;
 }
 
-// ================= START RADIO =================
+// ================= START =================
 DECL_HOOK(void, StartRadio, uintptr_t self, uintptr_t vehicleInfo)
 {
     if(FindPlayerVehicle(-1, false))
@@ -127,10 +108,10 @@ DECL_HOOK(void, StartRadio, uintptr_t self, uintptr_t vehicleInfo)
     StartRadio(self, vehicleInfo);
 }
 
-// ================= STOP RADIO =================
+// ================= STOP =================
 DECL_HOOK(void, StopRadio, uintptr_t self, uintptr_t vehicleInfo, unsigned char flag)
 {
-    bIsRadioStarted = false;
+    bRadioActive = false;
     bRadioPending = false;
 
     if(pCurrentRadio)
@@ -141,29 +122,14 @@ DECL_HOOK(void, StopRadio, uintptr_t self, uintptr_t vehicleInfo, unsigned char 
     }
 
     nRadioIndex = 0;
-    bIsRadioShouldBeRendered = false;
 
     StopRadio(self, vehicleInfo, flag);
 }
 
-// ================= VOLUME =================
-void VolumeChanged(int oldVal, int newVal, void* data)
+// ================= TOUCH FIX (CORRECT EVENT) =================
+Events::touchEvent += [](int type, int x, int y)
 {
-    pRadioVolume->SetInt(newVal);
-
-    if(pCurrentRadio)
-        BASS->ChannelSetAttribute(pCurrentRadio, BASS_ATTRIB_VOL, 0.005f * newVal);
-
-    cfg->Save();
-}
-
-// ================= TOUCH UI =================
-Events::touchScreenEvent.after += [](int type, int finger, int x, int y)
-{
-    if(!bIsRadioShouldBeRendered || type != 2)
-        return;
-
-    if(bRadioPending)
+    if(!bRadioActive || type != 0)
         return;
 
     float top = RsGlobal.maximumHeight * 0.135f;
@@ -178,7 +144,7 @@ Events::touchScreenEvent.after += [](int type, int finger, int x, int y)
         else
             nRadioIndex--;
 
-        ClampRadioIndex();
+        ClampIndex();
 
         pCurrentRadioIndex->SetInt(nRadioIndex);
         cfg->Save();
@@ -187,16 +153,16 @@ Events::touchScreenEvent.after += [](int type, int finger, int x, int y)
     }
 };
 
-// ================= HUD =================
-Events::drawHudEvent.after += []()
+// ================= HUD FIX (CORRECT EVENT REPLACEMENT) =================
+void DrawRadio()
 {
-    if(!bIsRadioShouldBeRendered)
+    if(!bRadioActive)
         return;
 
     float scale = (float)RsGlobal.maximumHeight / 540.0f;
 
     CFont::SetScale(scale);
-    CFont::SetColor(bIsRadioStarted ? clrRadioPlaying : clrRadioLoading);
+    CFont::SetColor(bRadioActive ? clrPlaying : clrLoading);
     CFont::SetFontStyle(FO_FONT_STYLE_HEADING);
     CFont::SetEdge(1);
     CFont::SetOrientation(ALIGN_CENTER);
@@ -208,28 +174,20 @@ Events::drawHudEvent.after += []()
     );
 
     CFont::RenderFontBuffer();
-};
+}
 
-// ================= MOD LOAD =================
+// ================= MAIN LOOP (REPLACES drawHudEvent) =================
 ON_MOD_LOAD()
 {
     pGTASA = aml->GetLib("libGTASA.so");
-    hGTASA = aml->GetLibHandle("libGTASA.so");
 
     BASS = (IBASS*)GetInterface("BASS");
-    BASS->SetConfig(BASS_CONFIG_NET_TIMEOUT, 5000);
 
     pCurrentRadioIndex = cfg->Bind("CurrentRadioIndex", 0);
     pRadioVolume = cfg->Bind("RadioVolume", 80);
 
     nRadiosCount = cfg->Bind("RadiosCount", 0)->GetInt();
     if(nRadiosCount > MAX_RADIOS) nRadiosCount = MAX_RADIOS;
-
-    if(nRadiosCount <= 0)
-    {
-        logger->Error("No radios found in config!");
-        return;
-    }
 
     pRadioStreams = new const char*[nRadiosCount];
     pRadioNames   = new const char*[nRadiosCount];
@@ -241,12 +199,18 @@ ON_MOD_LOAD()
         sprintf(key, "Radio_%d", i + 1);
 
         pRadioStreams[i] = cfg->Bind(key, "", "URLs")->GetString();
-        pRadioNames[i]   = cfg->Bind(key, "Untitled Radio", "Names")->GetString();
+        pRadioNames[i]   = cfg->Bind(key, "Untitled", "Names")->GetString();
     }
 
     cfg->Save();
 
     HOOKPLT(StartRadio, pGTASA + BYBIT(0x66F738, 0x83F5C0));
-    HOOK(StopRadio, aml->GetSym(hGTASA,
+    HOOK(StopRadio, aml->GetSym(aml->GetLibHandle("libGTASA.so"),
         "_ZN20CAERadioTrackManager9StopRadioEP21tVehicleAudioSettingsh"));
+
+    // MAIN LOOP (replaces drawHudEvent)
+    Events::gameProcessEvent += []()
+    {
+        DrawRadio();
+    };
 }
