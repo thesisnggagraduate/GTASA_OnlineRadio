@@ -1,31 +1,32 @@
-LOCAL_PATH := $(call my-dir)
-
 include $(CLEAR_VARS)
 LOCAL_CPP_EXTENSION := .cpp .cc
 
 ifeq ($(TARGET_ARCH_ABI), armeabi-v7a)
-    LOCAL_MODULE := OnlineRadio
+LOCAL_MODULE := OnlineRadio
 else
-    LOCAL_MODULE := OnlineRadio64
+LOCAL_MODULE := OnlineRadio64
 endif
 
+# Listahan ng mga source files, kabilang ang mod at ImGui
 LOCAL_SRC_FILES := main.cpp \
                    mod/logger.cpp \
                    mod/config.cpp \
-                   $(EXTERNAL_IMGUI_PATH)/imgui.cpp \
-                   $(EXTERNAL_IMGUI_PATH)/imgui_draw.cpp \
-                   $(EXTERNAL_IMGUI_PATH)/imgui_tables.cpp \
-                   $(EXTERNAL_IMGUI_PATH)/imgui_widgets.cpp \
-                   $(EXTERNAL_IMGUI_PATH)/backends/imgui_impl_renderware.cpp
+                   imgui/imgui.cpp \
+                   imgui/imgui_draw.cpp \
+                   imgui/imgui_tables.cpp \
+                   imgui/imgui_widgets.cpp \
+                   imgui/imgui_impl_renderware.cpp
 
-LOCAL_CFLAGS += -O2 -mfloat-abi=softfp -DNDEBUG -std=c++17
-
-# Include directories para sa ImGui
+# Mga include directories
 LOCAL_C_INCLUDES += \
     $(LOCAL_PATH)/aml-psdk-gtasa \
     $(LOCAL_PATH)/aml-psdk-gtasa/aml-psdk/game_sa \
-    $(EXTERNAL_IMGUI_PATH)/AML_ImGui
+    $(LOCAL_PATH)/imgui
 
+# Compilation flags
+LOCAL_CFLAGS += -O2 -mfloat-abi=softfp -DNDEBUG -std=c++17
+
+# Linker libraries
 LOCAL_LDLIBS += -llog
 
 include $(BUILD_SHARED_LIBRARY)
