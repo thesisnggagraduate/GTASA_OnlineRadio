@@ -47,8 +47,11 @@ const char** pRadioStreams;
 const char** pRadioNames;
 char nRadiosCount, nRadioIndex;
 bool bIsRadioStarted = false;
+bool bIsRadioLoading = false;
+bool bIsRadioStopped = false;
 bool bIsRadioShouldBeRendered = false;
 GxtChar RadioGXT[256] { 0 };
+CRGBA clrRadioStop(128, 128, 128, 255);
 CRGBA clrRadioLoading(255, 228, 181, 255);
 CRGBA clrRadioPlaying(255, 255, 255, 255);
 CRGBA clrRadioOutline(  0,   0,   0, 255);
@@ -113,8 +116,9 @@ void DoRadio()
         }
         bIsRadioStarted = false;
         bIsRadioShouldBeRendered = true;
-        sprintf(szNewText, "< Current radiostation >~n~%s", pRadioNames[idx]);
+        sprintf(szNewText, "< Loading radiostation >~n~%s", pRadioNames[idx]);
         AsciiToGxtChar(szNewText, RadioGXT);
+        bIsRadioLoading = true;
     }
 
     auto currentRadio = BASS->StreamCreateURL(pRadioStreams[idx], 0, BASS_STREAM_BLOCK | BASS_STREAM_STATUS | BASS_STREAM_AUTOFREE | BASS_SAMPLE_FLOAT, 0);
@@ -129,12 +133,20 @@ void DoRadio()
     {
         pCurrentRadio = currentRadio;
         BASS->ChannelSetAttribute(pCurrentRadio, BASS_ATTRIB_VOL, 0.005f * pRadioVolume->GetInt());
+        sprintf(szNewText, "< Current radiostation >~n~%s", pRadioNames[idx]);
+        AsciiToGxtChar(szNewText, RadioGXT);
+        bIsRadioLoading = false;
         bIsRadioStarted = true;
         if(!CTimer::IsPaused()) BASS->ChannelPlay(pCurrentRadio, true);
     }
     else
     {
         logger->Error("Failed to open stream! Error Code: %d", BASS->ErrorGetCode());
+        sprintf(szNewText, "< Radio stream failed >");
+        AsciiToGxtChar(szNewText, RadioGXT);
+        bIsRadioShouldBeRendered = true; 
+        bIsRadioStopped = true; 
+        bIsRadioLoading = true;
     }
 }
 DECL_HOOK(void, StartRadio, uintptr_t self, uintptr_t vehicleInfo)
@@ -160,6 +172,7 @@ DECL_HOOK(void, StopRadio, uintptr_t self, uintptr_t vehicleInfo, unsigned char 
             nRadioIndex = -1;
         }
         bIsRadioShouldBeRendered = false;
+        bIsRadioStopped = true; 
     }
     StopRadio(self, vehicleInfo, flag);
 }
@@ -219,7 +232,11 @@ ON_MOD_LOAD()
         {
             float flScale = (float)RsGlobal.maximumHeight / 540.0f;
             CFont::SetScale(flScale);
-            CFont::SetColor(bIsRadioStarted ? clrRadioPlaying : clrRadioLoading);
+            CFont::SetScale(flScale);
+            if(bIsRadioStopped)
+                CFont::SetColor(clrRadioStop);
+            else
+                CFont::SetColor(bIsRadioStarted ? clrRadioPlaying : clrRadioLoading);
             CFont::SetFontStyle(FO_FONT_STYLE_HEADING);
             CFont::SetEdge(1);
             CFont::SetOrientation(ALIGN_CENTER);
