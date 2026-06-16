@@ -166,7 +166,6 @@ DECL_HOOK(void, StopRadio, uintptr_t self, uintptr_t vehicleInfo, unsigned char 
             nRadioIndex = -1;
         }
         bIsRadioShouldBeRendered = false;
-        bIsRadioStopped = true;
     }
     StopRadio(self, vehicleInfo, flag);
 }
