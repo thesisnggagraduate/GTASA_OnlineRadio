@@ -24,7 +24,7 @@ LOCAL_CFLAGS += -O2 -mfloat-abi=softfp -DNDEBUG -std=c++17
 LOCAL_C_INCLUDES += \
     $(LOCAL_PATH)/aml-psdk-gtasa \
     $(LOCAL_PATH)/aml-psdk-gtasa/aml-psdk/game_sa \
-    $(LOCAL_PATH)/imgui
+    $(LOCAL_PATH)/AML_ImGui
 
 LOCAL_LDLIBS += -llog
 
