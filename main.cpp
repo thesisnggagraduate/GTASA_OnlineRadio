@@ -15,8 +15,8 @@
 #include <base/Timer.h>
 #include <entity/PlayerPed.h>
 
-#include "imgui.h"
-#include "imgui_impl_renderware.h" // Placeholder, replace with actual backend
+#include <imgui.h>
+#include <imgui_impl_renderware.h> // Placeholder, replace with actual backend
 
 MYMODCFG(net.johny.gtasa.onlineradio, GTA:SA Online Radio UI, 1.0, Johny)
 NEEDGAME(com.rockstargames.gtasa)
