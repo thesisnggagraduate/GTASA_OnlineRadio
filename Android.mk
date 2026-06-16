@@ -1,28 +1,14 @@
+LOCAL_PATH := $(call my-dir)
+
 include $(CLEAR_VARS)
 LOCAL_CPP_EXTENSION := .cpp .cc
-
 ifeq ($(TARGET_ARCH_ABI), armeabi-v7a)
-LOCAL_MODULE := OnlineRadio
+    LOCAL_MODULE := OnlineRadio
 else
-LOCAL_MODULE := OnlineRadio64
+    LOCAL_MODULE := OnlineRadio64
 endif
-
-LOCAL_SRC_FILES := main.cpp \
-                   mod/logger.cpp \
-                   mod/config.cpp \
-                   imgui/imgui.cpp \
-                   imgui/imgui_draw.cpp \
-                   imgui/imgui_tables.cpp \
-                   imgui/imgui_widgets.cpp \
-                   AML_ImGui/imgui_impl_renderware.cpp
-
-LOCAL_C_INCLUDES += \
-    $(LOCAL_PATH)/aml-psdk-gtasa \
-    $(LOCAL_PATH)/aml-psdk-gtasa/aml-psdk/game_sa \
-    $(LOCAL_PATH)/AML_ImGui
-
+LOCAL_SRC_FILES := main.cpp mod/logger.cpp mod/config.cpp imgui.cpp imgui_draw.cpp imgui_tables.cpp imgui_widgets.cpp backends/imgui_impl_renderware.cpp
 LOCAL_CFLAGS += -O2 -mfloat-abi=softfp -DNDEBUG -std=c++17
-
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/aml-psdk-gtasa $(LOCAL_PATH)/aml-psdk-gtasa/aml-psdk/game_sa $(LOCAL_PATH)/AML_ImGui
 LOCAL_LDLIBS += -llog
-
-include $(BUILD_SHARED_LIBRARY)
+include $(BUILD_SHARED_LIBRARY) 
