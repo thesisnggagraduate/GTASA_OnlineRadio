@@ -36,6 +36,14 @@ jobs:
       with:
         args: -O ./ibass.h https://github.com/AndroidModLoader/BASSMod/raw/main/ibass.h
 
+    - name: Download ImGui source...
+      uses: wei/wget@v1
+      with:
+       args: -O ./imgui.zip https://github.com/ocornut/imgui/archive/refs/heads/master.zip
+       
+    - name: Extract ImGui...
+      run: unzip ./imgui.zip -d ./imgui
+
     - name: Install Android NDK (r24)...
       uses: nttld/setup-ndk@v1.2.0
       with:
