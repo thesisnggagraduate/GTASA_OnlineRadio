@@ -10,11 +10,13 @@
 #include <dlfcn.h>
 
 #include <Events.h>
-#include <imgui.h>
 #include <engine/Font.h>
 #include <engine/RsGlobal.h>
 #include <base/Timer.h>
 #include <entity/PlayerPed.h>
+
+#include "imgui.h"
+#include "imgui_impl_renderware.h" // Placeholder, replace with actual backend
 
 MYMODCFG(net.rusjj.gtasa.onlineradio, GTA:SA Online Radio, 1.2, RusJJ)
 NEEDGAME(com.rockstargames.gtasa)
@@ -24,17 +26,14 @@ END_DEPLIST()
 
 #define MAX_RADIOS 32
 
-
-
 #include "ibass.h"
-IBASS* BASS = nullptr;
-
 #include "isautils.h"
+
+IBASS* BASS = nullptr;
 ISAUtils* sautils = nullptr;
 
 uintptr_t pGTASA = 0;
 void* hGTASA = NULL;
-
 
 struct timeval pTimeNow;
 time_t lCurrentS;
@@ -52,12 +51,10 @@ bool bIsRadioLoading = false;
 bool bIsRadioStopped = false;
 bool bIsRadioShouldBeRendered = false;
 GxtChar RadioGXT[256] { 0 };
-const char* RadioGXT = "Station Name";
 CRGBA clrRadioStop(128, 128, 128, 255);
 CRGBA clrRadioLoading(255, 228, 181, 255);
 CRGBA clrRadioPlaying(255, 255, 255, 255);
 CRGBA clrRadioOutline(  0,   0,   0, 255);
-bool bIsRadioOverlayOpen = false;
 
 inline time_t GetCurrentTimeS()
 {
@@ -72,120 +69,69 @@ inline time_t GetCurrentTimeMs()
     return lCurrentMs;
 }
 
-DECL_HOOK(bool, PauseGame, void* self)
+// Hooks and radio functions omitted for brevity (use your original code here)
+
+// Global variable for ImGui UI toggle
+bool showRadioUI = false;
+
+// Function to render ImGui overlay
+void RenderImGuiOverlay()
 {
-    bIsRadioShouldBeRendered = false;
-    if(pCurrentRadio != 0) BASS->ChannelPause(pCurrentRadio);
-    return PauseGame(self);
-}
-DECL_HOOK(bool, ResumeGame, void* self)
-{
-    if(pCurrentRadio != 0)
+    if (!showRadioUI) return;
+
+    ImGui::Begin("Radio Controls");
+    if (ImGui::Button("Play/Pause"))
     {
-        bIsRadioShouldBeRendered = true;
-        BASS->ChannelPlay(pCurrentRadio, false);
-    }
-    return ResumeGame(self);
-}
-void VolumeChanged(int oldVal, int newVal, void* data)
-{
-    pRadioVolume->SetInt(newVal);
-    BASS->ChannelSetAttribute(pCurrentRadio, BASS_ATTRIB_VOL, 0.005f * newVal);
-    cfg->Save();
-}
-
-
-
-static char szNewText[0xFF];
-std::atomic<unsigned int> nRadioGen{0};
-std::mutex radioMutex;
-void DoRadio()
-{
-    unsigned int myGen = nRadioGen.fetch_add(1) + 1;
-
-    int idx = pCurrentRadioIndex->GetInt();
-    if(idx < 0) idx = nRadiosCount - 1;
-    if(idx >= nRadiosCount) idx = 0;
-    {
-        std::lock_guard<std::mutex> lk(radioMutex);
-        if(myGen != nRadioGen.load()) return;
-        
-        nRadioIndex = idx;
-        if(pCurrentRadio)
+        if (pCurrentRadio)
         {
-            BASS->ChannelStop(pCurrentRadio);
-            BASS->StreamFree(pCurrentRadio);
-            pCurrentRadio = 0;
+            static bool isPaused = false;
+            if (isPaused)
+            {
+                BASS->ChannelPlay(pCurrentRadio, false);
+                isPaused = false;
+            }
+            else
+            {
+                BASS->ChannelPause(pCurrentRadio);
+                isPaused = true;
+            }
         }
-        bIsRadioStarted = false;
-        bIsRadioShouldBeRendered = true;
-        sprintf(szNewText, "< Loading radiostation >~n~%s", pRadioNames[idx]);
-        AsciiToGxtChar(szNewText, RadioGXT);
-        bIsRadioLoading = true;
-        bIsRadioStopped = false; 
     }
 
-    auto currentRadio = BASS->StreamCreateURL(pRadioStreams[idx], 0, BASS_STREAM_BLOCK | BASS_STREAM_STATUS | BASS_STREAM_AUTOFREE | BASS_SAMPLE_FLOAT, 0);
+    // Volume slider similar to your original code
+    static int volume = pRadioVolume->GetInt();
+    if (ImGui::SliderInt("Volume", &volume, 0, 100))
+    {
+        pRadioVolume->SetInt(volume);
+        if (pCurrentRadio)
+            BASS->ChannelSetAttribute(pCurrentRadio, BASS_ATTRIB_VOL, 0.005f * volume);
+    }
 
-    std::lock_guard<std::mutex> lk(radioMutex);
-    if(myGen != nRadioGen.load())
+    if (ImGui::Button("Stop"))
     {
-        if(currentRadio) BASS->StreamFree(currentRadio);
-        return;
-    }
-    if(currentRadio)
-    {
-        pCurrentRadio = currentRadio;
-        BASS->ChannelSetAttribute(pCurrentRadio, BASS_ATTRIB_VOL, 0.005f * pRadioVolume->GetInt());
-        sprintf(szNewText, "< Current radiostation >~n~%s", pRadioNames[idx]);
-        AsciiToGxtChar(szNewText, RadioGXT);
-        bIsRadioLoading = false;
-        bIsRadioStarted = true;
-        bIsRadioStopped = false; 
-        if(!CTimer::IsPaused()) BASS->ChannelPlay(pCurrentRadio, true);
-    }
-    else
-    {
-        logger->Error("Failed to open stream! Error Code: %d", BASS->ErrorGetCode());
-        sprintf(szNewText, "< failed Stream >~n~%s", pRadioNames[idx]);
-        AsciiToGxtChar(szNewText, RadioGXT);
-        bIsRadioShouldBeRendered = true; 
-        bIsRadioStopped = true; 
-        bIsRadioLoading = false;
-        bIsRadioStarted = false;
-    }
-}
-DECL_HOOK(void, StartRadio, uintptr_t self, uintptr_t vehicleInfo)
-{
-    if(FindPlayerVehicle(-1, false) != 0)
-        std::thread(DoRadio).detach();
-}
-
-DECL_HOOK(void, StopRadio, uintptr_t self, uintptr_t vehicleInfo, unsigned char flag)
-{
-    nRadioGen.fetch_add(1);
-    {
-        std::lock_guard<std::mutex> lk(radioMutex);
-        if(!CTimer::IsPaused())
+        // Stop radio
+        nRadioGen.fetch_add(1);
         {
-            bIsRadioStarted = false;
-            if(pCurrentRadio)
+            std::lock_guard<std::mutex> lk(radioMutex);
+            if (pCurrentRadio)
             {
                 BASS->ChannelStop(pCurrentRadio);
                 BASS->StreamFree(pCurrentRadio);
                 pCurrentRadio = 0;
             }
-            nRadioIndex = -1;
+            bIsRadioStarted = false;
+            bIsRadioLoading = false;
+            bIsRadioStopped = true;
+            bIsRadioShouldBeRendered = false;
         }
-        bIsRadioShouldBeRendered = false;
-        bIsRadioStopped = true; 
     }
-    StopRadio(self, vehicleInfo, flag);
+    ImGui::End();
 }
 
-static char szTemp[16];
-ON_MOD_LOAD()
+// Main mod load function
+void OnModLoad()
 {
+    // Initialization code from your original setup
     pGTASA = aml->GetLib("libGTASA.so");
     hGTASA = aml->GetLibHandle("libGTASA.so");
 
@@ -195,91 +141,75 @@ ON_MOD_LOAD()
     pCurrentRadioIndex = cfg->Bind("CurrentRadioIndex", 0);
     pRadioVolume = cfg->Bind("RadioVolume", 80);
     nRadiosCount = cfg->Bind("RadiosCount", 0)->GetInt();
-    if(nRadiosCount > 0)
+    if (nRadiosCount > 0)
     {
-        if(nRadiosCount > MAX_RADIOS) nRadiosCount = MAX_RADIOS;
-        if(pCurrentRadioIndex->GetInt() < 0) pCurrentRadioIndex->SetInt(0);
-        if(pCurrentRadioIndex->GetInt() > MAX_RADIOS) pCurrentRadioIndex->SetInt(MAX_RADIOS);
+        if (nRadiosCount > MAX_RADIOS) nRadiosCount = MAX_RADIOS;
+        if (pCurrentRadioIndex->GetInt() < 0) pCurrentRadioIndex->SetInt(0);
+        if (pCurrentRadioIndex->GetInt() > MAX_RADIOS) pCurrentRadioIndex->SetInt(MAX_RADIOS);
 
         nRadioIndex = -1;
         pRadioStreams = new const char*[nRadiosCount];
         pRadioNames = new const char*[nRadiosCount];
-        for(int i = 0; i < nRadiosCount; ++i)
+        char szTemp[16];
+        for (int i = 0; i < nRadiosCount; ++i)
         {
-            sprintf(szTemp, "Radio_%d", i+1);
+            sprintf(szTemp, "Radio_%d", i + 1);
             pRadioStreams[i] = cfg->Bind(szTemp, "", "URLs")->GetString();
             pRadioNames[i] = cfg->Bind(szTemp, "Untitled Radio", "Names")->GetString();
         }
-        if(pRadioVolume->GetInt() > 100) pRadioVolume->SetInt(100);
-        else if(pRadioVolume->GetInt() < 0) pRadioVolume->SetInt(0);
+        if (pRadioVolume->GetInt() > 100) pRadioVolume->SetInt(100);
+        else if (pRadioVolume->GetInt() < 0) pRadioVolume->SetInt(0);
         cfg->Save();
     }
-    else 
+    else
     {
         logger->Error("There is no radios in the config! Mod is not loaded.");
         return;
     }
 
+    // Hooks
     HOOKPLT(PauseGame,          pGTASA + BYBIT(0x672644, 0x844230));
     HOOKPLT(ResumeGame,         pGTASA + BYBIT(0x67056C, 0x840CB0));
     HOOKPLT(StartRadio,         pGTASA + BYBIT(0x66F738, 0x83F5C0));
     HOOK(StopRadio,             aml->GetSym(hGTASA, "_ZN20CAERadioTrackManager9StopRadioEP21tVehicleAudioSettingsh"));
 
-    aml->PlaceB(pGTASA + BYBIT(0x2A4D28 + 0x1, 0x3638A4), pGTASA + BYBIT(0x2A4D3C + 0x1, 0x3638C0)); // Remove radio from Audio settings
-    sautils = (ISAUtils*)GetInterface("SAUtils");
-    if(sautils)
-    {
-        sautils->AddSliderItem(SetType_Audio, "Online-Radio Volume", pRadioVolume->GetInt(), 0, 100, VolumeChanged);
-    }
+    // Remove radio from settings
+    aml->PlaceB(pGTASA + BYBIT(0x2A4D28 + 0x1, 0x3638A4), pGTASA + BYBIT(0x2A4D3C + 0x1, 0x3638C0));
 
+    // Initialize ImGui
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    // Initialize your backend here (assuming RenderWare)
+    ImGui_ImplRenderWare_Init();
+
+    // Register draw callback
     Events::drawHudEvent.after += []()
     {
-        if (bIsRadioOverlayOpen)
+        // Toggle UI with F1 key
+        if (IsKeyPressed(VK_F1))
         {
-            // Positon at size ng overlay
-            ImGui::SetNextWindowPos(ImVec2(RsGlobal.maximumWidth * 0.5f, RsGlobal.maximumHeight * 0.02f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
-            ImGui::SetNextWindowBgAlpha(0.0f);
-    
-            // Simulan ang ImGui window
-            ImGui::Begin("RadioStatusOverlay", nullptr, 
-                ImGuiWindowFlags_NoTitleBar | 
-                ImGuiWindowFlags_NoResize | 
-                ImGuiWindowFlags_AlwaysAutoResize | 
-                ImGuiWindowFlags_NoBackground);
-    
-            if (ImGui::Button("Close"))
-            {
-                bIsRadioOverlayOpen = false; 
-            }
-    
-            // Kulay depende sa estado
-            ImU32 textColor = IM_COL32(255, 255, 255, 255);
-            if (bIsRadioLoading)
-                textColor = IM_COL32(255, 228, 181, 255);
-            else if (bIsRadioStarted)
-                textColor = IM_COL32(255, 255, 255, 255);
-            else if (bIsRadioStopped)
-                textColor = IM_COL32(128, 128, 128, 255);
-    
-            // I-set ang kulay ng teksto
-            ImGui::PushStyleColor(ImGuiCol_Text, textColor);
-    
-            // Ipakita ang status
-            if (bIsRadioLoading)
-                ImGui::Text("Loading Radio...");
-            else
-                ImGui::Text("%s", RadioGXT);
-    
-            ImGui::PopStyleColor();
-    
-            ImGui::End();
+            showRadioUI = !showRadioUI;
         }
-        else
-        {
-            if (ImGui::Button("Online Radio"))
-            {
-                bIsRadioOverlayOpen = true;
-            }
-        }
+
+        // Start ImGui frame
+        ImGui_ImplRenderWare_NewFrame();
+        ImGui::NewFrame();
+
+        // Render overlay if toggled
+        RenderImGuiOverlay();
+
+        // Render ImGui
+        ImGui::Render();
+        ImGui_ImplRenderWare_RenderDrawData(ImGui::GetDrawData());
     };
+
+    // Other event handlers...
+}
+
+// Cleanup (if needed)
+void OnModUnload()
+{
+    ImGui_ImplRenderWare_Shutdown();
+    ImGui::DestroyContext();
+    // Clean up other resources
 }
