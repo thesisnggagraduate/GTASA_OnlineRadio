@@ -9,12 +9,14 @@ else
     LOCAL_MODULE := OnlineRadio64
 endif
 
-LOCAL_SRC_FILES := main.cpp mod/logger.cpp mod/config.cpp \
-                   imgui/imgui.cpp \
-                   imgui/imgui_draw.cpp \
-                   imgui/imgui_tables.cpp \
-                   imgui/imgui_widgets.cpp \
-                   imgui/imgui_impl_renderware.cpp  # Kung may custom backend, gawa ka nito
+LOCAL_SRC_FILES := main.cpp \
+                   mod/logger.cpp \
+                   mod/config.cpp \
+                   $(EXTERNAL_IMGUI_PATH)/imgui.cpp \
+                   $(EXTERNAL_IMGUI_PATH)/imgui_draw.cpp \
+                   $(EXTERNAL_IMGUI_PATH)/imgui_tables.cpp \
+                   $(EXTERNAL_IMGUI_PATH)/imgui_widgets.cpp \
+                   $(EXTERNAL_IMGUI_PATH)/backends/imgui_impl_renderware.cpp
 
 LOCAL_CFLAGS += -O2 -mfloat-abi=softfp -DNDEBUG -std=c++17
 
