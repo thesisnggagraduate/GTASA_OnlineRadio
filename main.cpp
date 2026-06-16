@@ -144,7 +144,7 @@ void DoRadio()
     else
     {
         logger->Error("Failed to open stream! Error Code: %d", BASS->ErrorGetCode());
-        sprintf(szNewText, "< Radio stream failed >");
+        sprintf(szNewText, "< failed Stream >~n~%s", pRadioNames[idx]);
         AsciiToGxtChar(szNewText, RadioGXT);
         bIsRadioShouldBeRendered = true; 
         bIsRadioStopped = true; 
