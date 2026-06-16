@@ -7,7 +7,6 @@ else
 LOCAL_MODULE := OnlineRadio64
 endif
 
-# Listahan ng mga source files, kabilang ang mod at ImGui
 LOCAL_SRC_FILES := main.cpp \
                    mod/logger.cpp \
                    mod/config.cpp \
@@ -15,18 +14,15 @@ LOCAL_SRC_FILES := main.cpp \
                    imgui/imgui_draw.cpp \
                    imgui/imgui_tables.cpp \
                    imgui/imgui_widgets.cpp \
-                   imgui/imgui_impl_renderware.cpp
+                   AML_ImGui/imgui_impl_renderware.cpp
 
-# Mga include directories
 LOCAL_C_INCLUDES += \
     $(LOCAL_PATH)/aml-psdk-gtasa \
     $(LOCAL_PATH)/aml-psdk-gtasa/aml-psdk/game_sa \
-    $(LOCAL_PATH)/imgui
+    $(LOCAL_PATH)/AML_ImGui
 
-# Compilation flags
 LOCAL_CFLAGS += -O2 -mfloat-abi=softfp -DNDEBUG -std=c++17
 
-# Linker libraries
 LOCAL_LDLIBS += -llog
 
 include $(BUILD_SHARED_LIBRARY)
