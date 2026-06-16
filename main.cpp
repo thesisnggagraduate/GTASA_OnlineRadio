@@ -18,7 +18,7 @@
 #include "imgui.h"
 #include "imgui_impl_renderware.h" // Placeholder, replace with actual backend
 
-MYMODCFG(net.rusjj.gtasa.onlineradio, GTA:SA Online Radio, 1.2, RusJJ)
+MYMODCFG(net.johny.gtasa.onlineradio, GTA:SA Online Radio UI, 1.0, Johny)
 NEEDGAME(com.rockstargames.gtasa)
 BEGIN_DEPLIST()
     ADD_DEPENDENCY(net.rusjj.basslib)
