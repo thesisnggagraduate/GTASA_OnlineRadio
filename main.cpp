@@ -16,8 +16,7 @@
 #include <entity/PlayerPed.h>
 
 #include <imgui.h>
-#include <backends/imgui_impl_vulkan.cpp>
-#include <backends/imgui_impl_vulkan.h>
+#include <backends/imgui_impl_renderware.cpp>
 
 MYMODCFG(net.johny.gtasa.onlineradio, GTA:SA Online Radio UI, 1.0, Johny)
 NEEDGAME(com.rockstargames.gtasa)
