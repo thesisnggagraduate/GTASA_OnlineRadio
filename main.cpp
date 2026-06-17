@@ -16,7 +16,8 @@
 #include <entity/PlayerPed.h>
 
 #include <imgui.h>
-#include <imgui_impl_renderware.h> // Placeholder, replace with actual backend
+#include <imgui_impl_vulkan.cpp>
+#include <imgui_impl_vulkan.h>
 
 MYMODCFG(net.johny.gtasa.onlineradio, GTA:SA Online Radio UI, 1.0, Johny)
 NEEDGAME(com.rockstargames.gtasa)
