@@ -16,6 +16,7 @@
 #include <entity/PlayerPed.h>
 
 #include <imgui.h>
+#include <imgui.cpp>
 #include <backends/imgui_impl_renderware.cpp> 
 
 // Declare external variables, functions, or macros if needed

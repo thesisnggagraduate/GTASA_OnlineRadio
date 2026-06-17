@@ -7,7 +7,7 @@ ifeq ($(TARGET_ARCH_ABI), armeabi-v7a)
 else
     LOCAL_MODULE := OnlineRadio64
 endif
-LOCAL_SRC_FILES := main.cpp mod/logger.cpp mod/config.cpp imgui.cpp imgui_draw.cpp imgui_tables.cpp imgui_widgets.cpp backends/imgui_impl_renderware.cpp
+LOCAL_SRC_FILES := main.cpp mod/logger.cpp mod/config.cpp imgui.h imgui.cpp imgui_draw.cpp imgui_tables.cpp imgui_widgets.cpp backends/imgui_impl_renderware.cpp
 LOCAL_CFLAGS += -O2 -mfloat-abi=softfp -DNDEBUG -std=c++17
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/aml-psdk-gtasa $(LOCAL_PATH)/aml-psdk-gtasa/aml-psdk/game_sa $(LOCAL_PATH)/AML_ImGui
 LOCAL_LDLIBS += -llog
